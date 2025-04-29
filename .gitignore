@@ -1,0 +1,34 @@
+# Terraform state and plan files
+*.tfstate
+*.tfstate.*
+*.tfplan
+.terraform/
+
+# Crash logs
+crash.log
+
+# Local-only override files
+terraform.tfvars
+*.auto.tfvars
+
+# Docker artifacts
+*.tar
+*.img
+docker-compose.override.yml
+
+# Python cache (if you have Python worker in /worker)
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# OS / Editor junk
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Secrets (if any local dev envs)
+.env
+.env.*
