@@ -1,0 +1,39 @@
+name: Build and Push audio-clean Docker image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'worker/**'
+      - '.github.com/workflows/push-audio-clean.yml'
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPO: 711556655801.dkr.ecr.us-east-1.amazonaws.com/tamma-dev-audio-clean
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v3
+        with:
+          role-to-assume: arn:aws:iam::711556655801:role/github-oidc
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        run: |
+          aws ecr get-login-password --region $AWS_REGION | \
+          docker login --username AWS --password-stdin $ECR_REPO
+
+      - name: Build and push Docker image
+        run: |
+          docker build -t $ECR_REPO:latest ./worker
+          docker push $ECR_REPO:latest
