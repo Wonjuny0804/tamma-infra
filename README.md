@@ -1,6 +1,6 @@
 # Tamma Infra
 
-This repository defines the **infrastructure-as-code (IaC)** for [Tamma](https://tamma.ai) — an AI-powered content assistant for creators, developed as part of **InfuseAI Labs**. The infrastructure is built entirely using **Terraform**, provisioned on **AWS**, and designed to support both audio and video automation pipelines.
+This repository defines the **infrastructure-as-code (IaC)** for [Tamma](https://tamma.infuseailabs.com) — an AI-powered content assistant for creators, developed as part of **InfuseAI Labs**. The infrastructure is built entirely using **Terraform**, provisioned on **AWS**, and designed to support both audio and video automation pipelines.
 
 ---
 
