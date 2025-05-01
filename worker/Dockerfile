@@ -10,4 +10,4 @@ COPY requirements.txt .
 RUN pip install -r requirements.txt
 COPY worker.py .
 
-CMD ["python", "worder.py"]
+CMD ["python", "worker.py"]

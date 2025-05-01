@@ -80,14 +80,25 @@ resource "aws_s3_bucket" "derived" {
   force_destroy = true
 }
 
+resource "aws_s3_bucket_notification" "raw_to_jobs" {
+  bucket = aws_s3_bucket.raw.id
+
+  queue {
+    queue_arn     = aws_sqs_queue.jobs.arn
+    events        = ["s3:ObjectCreated:*"]
+    filter_prefix = "audio/"
+  }
+
+  depends_on = [aws_sqs_queue_policy.allow_s3_to_jobs]
+}
+
 #################################
 # 4. MESSAGING — SQS FIFO QUEUE #
 #################################
 resource "aws_sqs_queue" "jobs" {
-  name                        = "${var.project}-${var.environment}-jobs.fifo"
-  fifo_queue                  = true
-  content_based_deduplication = true
-  visibility_timeout_seconds  = 900
+  name                       = "${var.project}-${var.environment}-jobs"
+  fifo_queue                 = false
+  visibility_timeout_seconds = 900
   redrive_policy = jsonencode({
     deadLetterTargetArn = aws_sqs_queue.jobs_dlq.arn,
     maxReceiveCount     = 5
@@ -95,9 +106,26 @@ resource "aws_sqs_queue" "jobs" {
 }
 
 resource "aws_sqs_queue" "jobs_dlq" {
-  name                        = "${var.project}-${var.environment}-jobs-dlq.fifo"
-  fifo_queue                  = true
-  content_based_deduplication = true
+  name = "${var.project}-${var.environment}-jobs-dlq"
+}
+
+resource "aws_sqs_queue_policy" "allow_s3_to_jobs" {
+  queue_url = aws_sqs_queue.jobs.id
+
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [{
+      Effect    = "Allow",
+      Principal = "*",
+      Action    = "sqs:SendMessage",
+      Resource  = aws_sqs_queue.jobs.arn,
+      Condition = {
+        ArnEquals = {
+          "aws:SourceArn" = aws_s3_bucket.raw.arn
+        }
+      }
+    }]
+  })
 }
 
 ##############################
@@ -186,6 +214,139 @@ resource "aws_ecr_lifecycle_policy" "audio_clean" {
 }
 
 ##############################
+# 5d. ECS TASK EXECUTION ROLE #
+##############################
+
+resource "aws_iam_role" "audio_clean_task_exec" {
+  name = "${var.project}-${var.environment}-ecs-task-execution-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [{
+      Effect = "Allow",
+      Action = "sts:AssumeRole",
+      Principal = {
+        Service = "ecs-tasks.amazonaws.com"
+      }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "ecs_task_exec_attach" {
+  role       = aws_iam_role.audio_clean_task_exec.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+}
+
+resource "aws_iam_role_policy" "ecs_task_access_s3" {
+  name = "ecs-task-s3-access"
+  role = aws_iam_role.audio_clean_task_exec.id
+
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Effect = "Allow",
+        Action = [
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:ListBucket",
+          "s3:HeadObject"
+        ],
+        Resource = [
+          "${aws_s3_bucket.raw.arn}",
+          "${aws_s3_bucket.raw.arn}/*",
+          "${aws_s3_bucket.derived.arn}",
+          "${aws_s3_bucket.derived.arn}/*"
+        ]
+      }
+    ]
+  })
+}
+
+
+##############################
+# 5e. ECS TASK DEFINITION    #
+##############################
+
+resource "aws_cloudwatch_log_group" "audio_clean" {
+  name              = "/ecs/audio-clean"
+  retention_in_days = 14
+}
+
+resource "aws_ecs_task_definition" "audio_clean_task" {
+  family                   = "${var.project}-${var.environment}-audio-clean"
+  requires_compatibilities = ["FARGATE"]
+  network_mode             = "awsvpc"
+  cpu                      = "1024"
+  memory                   = "2048"
+  execution_role_arn       = aws_iam_role.audio_clean_task_exec.arn
+  task_role_arn            = aws_iam_role.audio_clean_task_exec.arn
+
+  container_definitions = jsonencode([
+    {
+      name      = "audio-clean"
+      image     = "${aws_ecr_repository.audio_clean.repository_url}:latest"
+      essential = true
+      environment = [
+        {
+          name  = "RAW_BUCKET"
+          value = aws_s3_bucket.raw.bucket
+        },
+        {
+          name  = "DERIVED_BUCKET"
+          value = aws_s3_bucket.derived.bucket
+        },
+        {
+          name  = "JOBS_QUEUE_URL"
+          value = aws_sqs_queue.jobs.id
+        }
+      ],
+      logConfiguration = {
+        logDriver = "awslogs",
+        options = {
+          awslogs-group         = aws_cloudwatch_log_group.audio_clean.name
+          awslogs-region        = var.region
+          awslogs-stream-prefix = "ecs"
+        }
+      }
+    }
+  ])
+}
+
+##############################
+# 5f. ECS SERVICE (optional) #
+##############################
+
+resource "aws_security_group" "worker" {
+  name        = "${var.project}-${var.environment}-worker-sg"
+  description = "Security group for ECS Fargate worker"
+  vpc_id      = module.vpc.vpc_id
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+resource "aws_ecs_service" "audio_clean_service" {
+  name            = "${var.project}-${var.environment}-audio-clean"
+  cluster         = aws_ecs_cluster.main.id
+  task_definition = aws_ecs_task_definition.audio_clean_task.arn
+  launch_type     = "FARGATE"
+  desired_count   = 0 # We'll run it manually for now
+
+  network_configuration {
+    subnets          = module.vpc.private_subnets
+    security_groups  = [aws_security_group.worker.id]
+    assign_public_ip = false
+  }
+
+  depends_on = [aws_ecs_cluster_capacity_providers.fargate]
+}
+
+##############################
 # 6. PARAMETER STORE SECRETS #
 ##############################
 resource "aws_ssm_parameter" "assemblyai_api_key" {
@@ -209,4 +370,94 @@ output "cluster_name" {
 
 output "jobs_queue_url" {
   value = aws_sqs_queue.jobs.id
+}
+
+##############################
+# 8. LAMBDA — SQS Trigger to ECS
+##############################
+
+resource "aws_iam_role" "lambda_trigger_ecs_role" {
+  name = "${var.project}-${var.environment}-lambda-trigger-ecs-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [{
+      Action = "sts:AssumeRole",
+      Effect = "Allow",
+      Principal = {
+        Service = "lambda.amazonaws.com"
+      }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "lambda_trigger_ecs_policy" {
+  name = "lambda-run-ecs-task"
+  role = aws_iam_role.lambda_trigger_ecs_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Effect = "Allow",
+        Action = [
+          "ecs:RunTask",
+          "iam:PassRole"
+        ],
+        Resource = "*"
+      },
+      {
+        Effect = "Allow",
+        Action = [
+          "sqs:ReceiveMessage",
+          "sqs:DeleteMessage",
+          "sqs:GetQueueAttributes"
+        ],
+        Resource = aws_sqs_queue.jobs.arn
+      },
+      {
+        Effect = "Allow",
+        Action = [
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents"
+        ],
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+data "archive_file" "lambda_zip" {
+  type        = "zip"
+  source_file = "${path.module}/main.py"
+  output_path = "${path.module}/lambda.zip"
+}
+
+resource "aws_lambda_function" "trigger_audio_clean" {
+  function_name = "${var.project}-${var.environment}-trigger-clean"
+
+  filename         = data.archive_file.lambda_zip.output_path
+  source_code_hash = data.archive_file.lambda_zip.output_base64sha256
+  role             = aws_iam_role.lambda_trigger_ecs_role.arn
+  handler          = "main.lambda_handler"
+  runtime          = "python3.11"
+  timeout          = 30
+
+  environment {
+    variables = {
+      CLUSTER_NAME      = aws_ecs_cluster.main.name
+      TASK_DEFINITION   = aws_ecs_task_definition.audio_clean_task.family
+      SUBNET_ID         = module.vpc.private_subnets[0]
+      SECURITY_GROUP_ID = aws_security_group.worker.id
+      DERIVED_BUCKET    = aws_s3_bucket.derived.bucket
+      JOBS_QUEUE_URL    = aws_sqs_queue.jobs.id
+    }
+  }
+}
+
+resource "aws_lambda_event_source_mapping" "sqs_to_lambda" {
+  event_source_arn = aws_sqs_queue.jobs.arn
+  function_name    = aws_lambda_function.trigger_audio_clean.arn
+  batch_size       = 1
 }
