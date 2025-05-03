@@ -263,6 +263,25 @@ resource "aws_iam_role_policy" "ecs_task_access_s3" {
   })
 }
 
+resource "aws_iam_role_policy" "ecs_task_ssm_read" {
+  name = "ecs-task-ssm-read"
+  role = aws_iam_role.audio_clean_task_exec.id
+
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Effect = "Allow",
+        Action = ["ssm:GetParameter"],
+        Resource = [
+          aws_ssm_parameter.supabase_url.arn,
+          aws_ssm_parameter.supabase_service_key.arn
+        ]
+      }
+    ]
+  })
+}
+
 
 ##############################
 # 5e. ECS TASK DEFINITION    #
@@ -299,6 +318,14 @@ resource "aws_ecs_task_definition" "audio_clean_task" {
         {
           name  = "JOBS_QUEUE_URL"
           value = aws_sqs_queue.jobs.id
+        },
+        {
+          name  = "SUPABASE_URL"
+          value = aws_ssm_parameter.supabase_url.value
+        },
+        {
+          name  = "SUPABASE_SERVICE_KEY"
+          value = aws_ssm_parameter.supabase_service_key.value
         }
       ],
       logConfiguration = {
@@ -359,6 +386,18 @@ resource "aws_ssm_parameter" "openai_api_key" {
   name  = "/${var.project}/${var.environment}/openai_api_key"
   type  = "SecureString"
   value = "changeme"
+}
+
+resource "aws_ssm_parameter" "supabase_url" {
+  name  = "/${var.project}/${var.environment}/supabase_url"
+  type  = "String"
+  value = "https://<your‑project>.supabase.co"
+}
+
+resource "aws_ssm_parameter" "supabase_service_key" {
+  name  = "/${var.project}/${var.environment}/supabase_service_key"
+  type  = "SecureString"
+  value = "YOUR_SUPABASE_SERVICE_ROLE_KEY"
 }
 
 ##############################
@@ -423,6 +462,14 @@ resource "aws_iam_role_policy" "lambda_trigger_ecs_policy" {
           "logs:PutLogEvents"
         ],
         Resource = "*"
+      },
+      {
+        "Effect" : "Allow",
+        "Action" : ["ssm:GetParameter"],
+        "Resource" : [
+          "${aws_ssm_parameter.supabase_url.arn}",
+          "${aws_ssm_parameter.supabase_service_key.arn}"
+        ]
       }
     ]
   })
@@ -446,12 +493,14 @@ resource "aws_lambda_function" "trigger_audio_clean" {
 
   environment {
     variables = {
-      CLUSTER_NAME      = aws_ecs_cluster.main.name
-      TASK_DEFINITION   = aws_ecs_task_definition.audio_clean_task.family
-      SUBNET_ID         = module.vpc.private_subnets[0]
-      SECURITY_GROUP_ID = aws_security_group.worker.id
-      DERIVED_BUCKET    = aws_s3_bucket.derived.bucket
-      JOBS_QUEUE_URL    = aws_sqs_queue.jobs.id
+      CLUSTER_NAME         = aws_ecs_cluster.main.name
+      TASK_DEFINITION      = aws_ecs_task_definition.audio_clean_task.family
+      SUBNET_ID            = module.vpc.private_subnets[0]
+      SECURITY_GROUP_ID    = aws_security_group.worker.id
+      DERIVED_BUCKET       = aws_s3_bucket.derived.bucket
+      JOBS_QUEUE_URL       = aws_sqs_queue.jobs.id
+      SUPABASE_URL         = aws_ssm_parameter.supabase_url.value
+      SUPABASE_SERVICE_KEY = aws_ssm_parameter.supabase_service_key.value
     }
   }
 }

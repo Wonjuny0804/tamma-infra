@@ -1,8 +1,14 @@
 import json
 import boto3
 import os
+from supabase import create_client
 
 ecs = boto3.client("ecs")
+
+SUPABASE_URL = os.environ["SUPABASE_URL"]
+SUPABASE_KEY = os.environ["SUPABASE_SERVICE_KEY"]
+
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 def lambda_handler(event, context):
     print("Event:", json.dumps(event))
@@ -16,6 +22,9 @@ def lambda_handler(event, context):
         for s3_record in s3_event["Records"]:
             bucket = s3_record["s3"]["bucket"]["name"]
             key = s3_record["s3"]["object"]["key"]
+
+            row = supabase.from_("jobs").select("id").eq("s3_key", key).single().execute()
+            job_id = row.data["id"]
 
             print(f"Launching ECS task for file: s3://{bucket}/{key}")
 
