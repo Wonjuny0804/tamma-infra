@@ -80,17 +80,6 @@ resource "aws_s3_bucket" "derived" {
   force_destroy = true
 }
 
-resource "aws_s3_bucket_notification" "raw_to_jobs" {
-  bucket = aws_s3_bucket.raw.id
-
-  queue {
-    queue_arn     = aws_sqs_queue.jobs.arn
-    events        = ["s3:ObjectCreated:*"]
-    filter_prefix = "audio/"
-  }
-
-  depends_on = [aws_sqs_queue_policy.allow_s3_to_jobs]
-}
 
 #################################
 # 4. MESSAGING — SQS FIFO QUEUE #
@@ -391,13 +380,13 @@ resource "aws_ssm_parameter" "openai_api_key" {
 resource "aws_ssm_parameter" "supabase_url" {
   name  = "/${var.project}/${var.environment}/supabase_url"
   type  = "String"
-  value = "https://<your‑project>.supabase.co"
+  value = var.supabase_url
 }
 
 resource "aws_ssm_parameter" "supabase_service_key" {
   name  = "/${var.project}/${var.environment}/supabase_service_key"
   type  = "SecureString"
-  value = "YOUR_SUPABASE_SERVICE_ROLE_KEY"
+  value = var.supabase_service_key
 }
 
 ##############################
@@ -512,10 +501,10 @@ resource "aws_lambda_function" "trigger_audio_clean" {
       TASK_DEFINITION      = aws_ecs_task_definition.audio_clean_task.family
       SUBNET_ID            = module.vpc.private_subnets[0]
       SECURITY_GROUP_ID    = aws_security_group.worker.id
+      RAW_BUCKET           = aws_s3_bucket.raw.bucket
       DERIVED_BUCKET       = aws_s3_bucket.derived.bucket
-      JOBS_QUEUE_URL       = aws_sqs_queue.jobs.id
-      SUPABASE_URL         = aws_ssm_parameter.supabase_url.value
-      SUPABASE_SERVICE_KEY = aws_ssm_parameter.supabase_service_key.value
+      SUPABASE_URL         = var.supabase_url
+      SUPABASE_SERVICE_KEY = var.supabase_service_key
     }
   }
 }

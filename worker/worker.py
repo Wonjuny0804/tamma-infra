@@ -23,12 +23,6 @@ SUPABASE_KEY  = os.environ["SUPABASE_SERVICE_KEY"]
 s3 = boto3.client("s3")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-def process_file(temp_path):
-    # TODO: fake processing for now - just copy it
-    with open(temp_path, "rb") as f:
-        data = f.read()
-    return data
-
 
 def download_to_tmp():
     tmp_in = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")

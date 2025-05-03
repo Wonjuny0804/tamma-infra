@@ -1,53 +1,64 @@
 # Tamma Infra
 
-This repository defines the **infrastructure-as-code (IaC)** for [Tamma](https://tamma.infuseailabs.com) — an AI-powered content assistant for creators, developed as part of **InfuseAI Labs**. The infrastructure is built entirely using **Terraform**, provisioned on **AWS**, and designed to support both audio and video automation pipelines.
+This repository defines the **infrastructure-as-code (IaC)** for [Tamma](https://tamma.infuseailabs.com) — an AI-powered content assistant for creators, developed under **InfuseAI Labs**. The infrastructure uses **Terraform** on **AWS** and supports end-to-end audio and (future) video processing pipelines.
 
 ---
 
 ## 🌐 Architecture Overview
 
-```
-User Upload (S3)
-    └──▶ S3 Event → SQS (jobs.fifo)
-            └──▶ Lambda Trigger
-                    └──▶ ECS Task (audio-clean or video-repurpose)
-                            └──▶ Result saved to S3 (derived bucket)
+```text
+User upload (via Next.js API)
+    └──▶ S3 (raw bucket)
+            └──▶ Upload completion triggers custom API ➔ SQS (jobs queue)
+                    └──▶ Lambda invoker picks up job_id + s3_key
+                            └──▶ ECS Fargate task (audio-clean / video pipelines)
+                                    └──▶ Processed output saved to S3 (derived bucket)
+
+User requests download (via Next.js API)
+    └──▶ Presigned GET URL ➔ temporary, secure access to derived S3 objects
 ```
 
 ---
 
 ## 📦 Infrastructure Components
 
-### 1. **VPC + Subnets**
-- Isolated private/public subnet layout
+### 1. **VPC & Subnets**
+- Private/public subnets across multiple AZs
 - NAT Gateway for outbound internet access
 
 ### 2. **S3 Buckets**
-- `tamma-dev-raw` — for user uploads (audio/video)
-- `tamma-dev-derived` — for AI-processed outputs
-- Lifecycle rules clean up raw files after 30 days
+- `tamma-dev-raw` — stores user-uploaded media
+- `tamma-dev-derived` — stores processed assets
+- Lifecycle rule: raw bucket objects expire after 30 days
 
 ### 3. **SQS Queues**
-- `jobs.fifo` — receives file event messages from S3
-- `jobs-dlq.fifo` — dead-letter queue for failed jobs
+- `tamma-dev-jobs` — FIFO queue receives job messages (custom API sends `{job_id, s3_key}`)
+- `tamma-dev-jobs-dlq` — dead-letter queue for failed messages
 
 ### 4. **Lambda Function**
-- Triggered by new messages in `jobs` queue
-- Invokes Fargate ECS task with correct parameters
-- Defined in `main.py`, zipped and deployed via `archive_file`
+- Function: **trigger-audio-clean**
+- Invoked by SQS messages via an Event Source Mapping
+- Reads `job_id` + `s3_key`, invokes ECS task with those parameters
+- Environment variables include SSM‑backed Supabase URL & service key, bucket names, networking, etc.
 
 ### 5. **ECS (Fargate)**
-- Cluster: `tamma-dev-cluster`
-- GPU AutoScalingGroup (optional for future video models)
-- Task: `audio-clean` (defined with IAM + CloudWatch logs)
-- Pulls Docker image from ECR and runs `worker.py`
+- Cluster: `tamma-dev-cluster` with FARGATE and FARGATE_SPOT providers
+- **AutoScalingGroup** (GPU-backed) for future video workloads
+- Task definition `audio-clean` uses Docker image from ECR
+- CloudWatch logs retention: 14 days
 
 ### 6. **ECR Repository**
-- `tamma-dev-audio-clean` — holds the processing image
+- `tamma-dev-audio-clean` — stores the ffmpeg‑powered processing image
+- Lifecycle policy: retain last 10 images
 
-### 7. **IAM Roles**
-- ECS Task Role — allows access to S3, logs, and execution
-- Lambda Execution Role — allows `ecs:RunTask`, `sqs:ReceiveMessage`
+### 7. **IAM Roles & Users**
+- **Lambda Invoker Role** — allows SQS reads, ECS RunTask, SSM parameter access
+- **ECS Task Execution Role** — allows container pulls, S3 read/write, CloudWatch logs
+- **`tamma-presign` User** — CLI/API user for front‑end; granted SQS SendMessage and S3 GetObject rights
+
+### 8. **SSM Parameter Store**
+- `/tamma/dev/supabase_url` (String)
+- `/tamma/dev/supabase_service_key` (SecureString)
 
 ---
 
@@ -55,18 +66,19 @@ User Upload (S3)
 
 ### 🔧 Prerequisites:
 - Terraform CLI >= 1.6
-- AWS CLI configured with an IAM user that has full permissions
+- AWS CLI configured with an IAM identity possessing Terraform apply rights
+- `secret.auto.tfvars` (git‑ignored) with Supabase URL & service key
 
 ### 🚀 Deploy Commands:
 
 ```bash
-# Initialize Terraform
+# 1. Initialize Terraform
 terraform init
 
-# Validate config
+# 2. Validate configuration
 terraform validate
 
-# Apply the stack (takes 3–5 min)
+# 3. Apply the stack (builds layer, creates resources)
 terraform apply
 ```
 
@@ -75,20 +87,15 @@ terraform apply
 ## 📁 File Structure
 
 ```
-├── main.tf                # All Terraform config
-├── main.py                # Lambda source code
-├── lambda.zip             # Auto-generated Lambda zip
-├── README.md              # This file
+├── main.tf             # Terraform configuration
+├── variables.tf        # Input variable declarations
+├── lambda_layer/       # Python dependencies for the Lambda layer
+│   ├── python/
+│   └── requirements.txt
+├── main.py             # Lambda function handler source
+└── README.md           # This file
 ```
 
 ---
 
-## 🧠 Credits
-
-This system was hand-built by a solo engineer from scratch using raw AWS services + Terraform. The purpose was to learn real-world production infra while solving a practical workflow pain point for creators.
-
-> If you’re building something similar — fork this, ask questions, or just say hi!
-
----
-
-© 2025 InfuseAI Labs — Built with purpose and automation.
+© 2025 InfuseAI Labs — Built for efficient content workflows.
