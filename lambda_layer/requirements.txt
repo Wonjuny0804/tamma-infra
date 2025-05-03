@@ -1,0 +1,2 @@
+supabase==1.*           # (unchanged)
+pydantic<2              # force pure‑Python 1.x
