@@ -32,3 +32,6 @@ Thumbs.db
 # Secrets (if any local dev envs)
 .env
 .env.*
+
+supabase_layer.zip
+lambda_layer/python/*

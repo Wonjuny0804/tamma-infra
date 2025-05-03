@@ -481,6 +481,19 @@ data "archive_file" "lambda_zip" {
   output_path = "${path.module}/lambda.zip"
 }
 
+data "archive_file" "supabase_layer_zip" {
+  type        = "zip"
+  source_dir  = "${path.module}/lambda_layer"
+  output_path = "${path.module}/supabase_layer.zip"
+}
+
+resource "aws_lambda_layer_version" "supabase" {
+  layer_name          = "${var.project}-${var.environment}-supabase"
+  compatible_runtimes = ["python3.11"]
+  filename            = data.archive_file.supabase_layer_zip.output_path
+  source_code_hash    = data.archive_file.supabase_layer_zip.output_base64sha256
+}
+
 resource "aws_lambda_function" "trigger_audio_clean" {
   function_name = "${var.project}-${var.environment}-trigger-clean"
 
@@ -490,6 +503,8 @@ resource "aws_lambda_function" "trigger_audio_clean" {
   handler          = "main.lambda_handler"
   runtime          = "python3.11"
   timeout          = 30
+
+  layers = [aws_lambda_layer_version.supabase.arn]
 
   environment {
     variables = {
@@ -510,3 +525,5 @@ resource "aws_lambda_event_source_mapping" "sqs_to_lambda" {
   function_name    = aws_lambda_function.trigger_audio_clean.arn
   batch_size       = 1
 }
+
+
