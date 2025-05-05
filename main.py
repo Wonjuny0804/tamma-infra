@@ -16,7 +16,9 @@ def lambda_handler(event, context):
         body   = json.loads(record["body"])
         job_id = body["job_id"]
         key    = body["s3_key"]
-        bucket = os.environ["RAW_BUCKET"]          # from your env‑vars
+        bucket = os.environ["RAW_BUCKET"]
+        file_type = "video" if key.lower().endswith((".mp4", ".mov")) else "audio"
+        task_family = os.environ["VIDEO_TASK_DEF"] if file_type == "video" else os.environ["TASK_DEFINITION"]
         derived = os.environ["DERIVED_BUCKET"]
 
         print(f"Launching ECS task for job={job_id}, s3://{bucket}/{key}")
@@ -24,7 +26,7 @@ def lambda_handler(event, context):
         ecs.run_task(
             cluster=os.environ["CLUSTER_NAME"],
             launchType="FARGATE",
-            taskDefinition=os.environ["TASK_DEFINITION"],
+            taskDefinition=task_family,
             count=1,
             networkConfiguration={
                 "awsvpcConfiguration": {

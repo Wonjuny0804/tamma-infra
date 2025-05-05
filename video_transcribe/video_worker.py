@@ -1,0 +1,1 @@
+print("Hello from video_transcribe worker")

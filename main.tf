@@ -202,6 +202,23 @@ resource "aws_ecr_lifecycle_policy" "audio_clean" {
   })
 }
 
+resource "aws_ecr_repository" "video_transcribe" {
+  name = "${var.project}-${var.environment}-video-transcribe"
+  image_scanning_configuration { scan_on_push = true }
+}
+
+resource "aws_ecr_lifecycle_policy" "video_transcribe" {
+  repository = aws_ecr_repository.video_transcribe.name
+  policy = jsonencode({
+    rules = [{
+      rulePriority = 1,
+      description  = "retain last 10 images",
+      selection    = { tagStatus = "any", countType = "imageCountMoreThan", countNumber = 10 },
+      action       = { type = "expire" }
+    }]
+  })
+}
+
 ##############################
 # 5d. ECS TASK EXECUTION ROLE #
 ##############################
@@ -281,6 +298,11 @@ resource "aws_cloudwatch_log_group" "audio_clean" {
   retention_in_days = 14
 }
 
+resource "aws_cloudwatch_log_group" "video_transcribe" {
+  name              = "/ecs/video-transcribe"
+  retention_in_days = 14
+}
+
 resource "aws_ecs_task_definition" "audio_clean_task" {
   family                   = "${var.project}-${var.environment}-audio-clean"
   requires_compatibilities = ["FARGATE"]
@@ -328,6 +350,39 @@ resource "aws_ecs_task_definition" "audio_clean_task" {
     }
   ])
 }
+
+resource "aws_ecs_task_definition" "video_transcribe_task" {
+  family                   = "${var.project}-${var.environment}-video-transcribe"
+  requires_compatibilities = ["FARGATE"]
+  network_mode             = "awsvpc"
+  cpu                      = "2048"
+  memory                   = "4096"
+  execution_role_arn       = aws_iam_role.audio_clean_task_exec.arn # reuse
+  task_role_arn            = aws_iam_role.audio_clean_task_exec.arn # reuse
+
+  container_definitions = jsonencode([
+    {
+      name      = "video-transcribe",
+      image     = "${aws_ecr_repository.video_transcribe.repository_url}:latest",
+      essential = true,
+      environment = [
+        { "name" : "RAW_BUCKET", "value" : aws_s3_bucket.raw.bucket },
+        { "name" : "DERIVED_BUCKET", "value" : aws_s3_bucket.derived.bucket },
+        { "name" : "SUPABASE_URL", "value" : var.supabase_url },
+        { "name" : "SUPABASE_SERVICE_KEY", "value" : var.supabase_service_key }
+      ],
+      logConfiguration = {
+        logDriver = "awslogs",
+        options = {
+          awslogs-group         = aws_cloudwatch_log_group.video_transcribe.name,
+          awslogs-region        = var.region,
+          awslogs-stream-prefix = "ecs"
+        }
+      }
+    }
+  ])
+}
+
 
 ##############################
 # 5f. ECS SERVICE (optional) #
@@ -499,6 +554,7 @@ resource "aws_lambda_function" "trigger_audio_clean" {
     variables = {
       CLUSTER_NAME         = aws_ecs_cluster.main.name
       TASK_DEFINITION      = aws_ecs_task_definition.audio_clean_task.family
+      VIDEO_TASK_DEF       = aws_ecs_task_definition.video_transcribe_task.family
       SUBNET_ID            = module.vpc.private_subnets[0]
       SECURITY_GROUP_ID    = aws_security_group.worker.id
       RAW_BUCKET           = aws_s3_bucket.raw.bucket
