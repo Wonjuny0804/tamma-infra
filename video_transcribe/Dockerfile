@@ -12,4 +12,4 @@ COPY requirements.txt .
 RUN pip install -r requirements.txt
 COPY video_worker.py .
 
-CMD ["python", "video_worker.py"]
+CMD ["python3", "video_worker.py"]
