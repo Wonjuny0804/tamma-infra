@@ -38,7 +38,7 @@ def lambda_handler(event, context):
             overrides={
                 "containerOverrides": [
                     {
-                        "name": "audio-clean",
+                        "name": "video-transcribe" if file_type == "video" else "audio-clean",
                         "environment": [
                             {"name": "JOB_ID",        "value": str(job_id)},
                             {"name": "INPUT_FILE",    "value": key},
