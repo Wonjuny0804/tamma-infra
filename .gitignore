@@ -35,3 +35,6 @@ Thumbs.db
 
 supabase_layer.zip
 lambda_layer/python/*
+
+# Test files
+tests/

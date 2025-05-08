@@ -20,6 +20,22 @@ variable "region" { default = "us-east-1" }
 variable "project" { default = "tamma" }
 variable "environment" { default = "dev" }
 
+
+##############################
+# 0b.  DATA — Lambda assume role
+##############################
+data "aws_iam_policy_document" "lambda_assume" {
+  statement {
+    effect  = "Allow"
+    actions = ["sts:AssumeRole"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["lambda.amazonaws.com"]
+    }
+  }
+}
+
 ##############################
 # 1. AWS  PROVIDER           #
 ##############################
@@ -572,3 +588,80 @@ resource "aws_lambda_event_source_mapping" "sqs_to_lambda" {
 }
 
 
+##############################
+# 8b. LAMBDA – Clip Suggestion
+##############################
+
+resource "aws_iam_role" "lambda_suggest_clips_role" {
+  name = "${var.project}-${var.environment}-lambda-suggest-clips-role"
+  assume_role_policy = data.aws_iam_policy_document.lambda_assume.json
+}
+
+# Allow it to read transcript object + write back to derived + update Supabase
+resource "aws_iam_role_policy" "lambda_suggest_clips_policy" {
+  role = aws_iam_role.lambda_suggest_clips_role.id
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      # S3 read/write
+      {
+        Effect = "Allow",
+        Action = ["s3:GetObject", "s3:PutObject"],
+        Resource = [
+          "${aws_s3_bucket.derived.arn}/transcripts/*",
+          "${aws_s3_bucket.derived.arn}/clips/*"
+        ]
+      },
+      # CloudWatch logs
+      {
+        Effect = "Allow",
+        Action = ["logs:CreateLogGroup","logs:CreateLogStream","logs:PutLogEvents"],
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+data "archive_file" "suggest_clips_zip" {
+  type        = "zip"
+  source_file = "${path.module}/suggest_clips.py"
+  output_path = "${path.module}/suggest_clips.zip"
+}
+
+resource "aws_lambda_function" "suggest_clips" {
+  function_name    = "${var.project}-${var.environment}-suggest-clips"
+  filename         = data.archive_file.suggest_clips_zip.output_path
+  source_code_hash = data.archive_file.suggest_clips_zip.output_base64sha256
+  handler          = "suggest_clips.lambda_handler"
+  runtime          = "python3.11"
+  timeout          = 30
+  role             = aws_iam_role.lambda_suggest_clips_role.arn
+
+  layers = [aws_lambda_layer_version.supabase.arn]
+
+  environment {
+    variables = {
+      SUPABASE_URL         = var.supabase_url
+      SUPABASE_SERVICE_KEY = var.supabase_service_key
+    }
+  }
+}
+
+resource "aws_s3_bucket_notification" "derived_to_lambda" {
+  bucket = aws_s3_bucket.derived.id
+  lambda_function {
+    lambda_function_arn = aws_lambda_function.suggest_clips.arn
+    events              = ["s3:ObjectCreated:*"]
+    filter_suffix       = ".json"
+    filter_prefix       = "transcripts/"
+  }
+  depends_on = [aws_lambda_permission.s3_invoke_suggest_clips]
+}
+
+resource "aws_lambda_permission" "s3_invoke_suggest_clips" {
+  statement_id  = "AllowS3Invoke"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.suggest_clips.function_name
+  principal     = "s3.amazonaws.com"
+  source_arn    = aws_s3_bucket.derived.arn
+}
