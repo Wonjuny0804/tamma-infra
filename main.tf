@@ -278,7 +278,8 @@ resource "aws_iam_role_policy" "ecs_task_access_s3" {
           "${aws_s3_bucket.raw.arn}",
           "${aws_s3_bucket.raw.arn}/*",
           "${aws_s3_bucket.derived.arn}",
-          "${aws_s3_bucket.derived.arn}/*"
+          "${aws_s3_bucket.derived.arn}/*",
+          "${aws_s3_bucket.derived.arn}/clips/*"
         ]
       }
     ]
@@ -530,6 +531,11 @@ resource "aws_iam_role_policy" "lambda_trigger_ecs_policy" {
           "${aws_ssm_parameter.supabase_url.arn}",
           "${aws_ssm_parameter.supabase_service_key.arn}"
         ]
+      },
+      {
+        "Effect" : "Allow",
+        "Action" : ["s3:GetObject"],
+        "Resource" : "${aws_s3_bucket.derived.arn}/clip_requests/*"
       }
     ]
   })
@@ -593,7 +599,7 @@ resource "aws_lambda_event_source_mapping" "sqs_to_lambda" {
 ##############################
 
 resource "aws_iam_role" "lambda_suggest_clips_role" {
-  name = "${var.project}-${var.environment}-lambda-suggest-clips-role"
+  name               = "${var.project}-${var.environment}-lambda-suggest-clips-role"
   assume_role_policy = data.aws_iam_policy_document.lambda_assume.json
 }
 
@@ -614,8 +620,8 @@ resource "aws_iam_role_policy" "lambda_suggest_clips_policy" {
       },
       # CloudWatch logs
       {
-        Effect = "Allow",
-        Action = ["logs:CreateLogGroup","logs:CreateLogStream","logs:PutLogEvents"],
+        Effect   = "Allow",
+        Action   = ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"],
         Resource = "*"
       }
     ]
@@ -647,21 +653,7 @@ resource "aws_lambda_function" "suggest_clips" {
   }
 }
 
-resource "aws_s3_bucket_notification" "derived_to_lambda" {
+resource "aws_s3_bucket_notification" "derived_eventbridge" {
   bucket = aws_s3_bucket.derived.id
-  lambda_function {
-    lambda_function_arn = aws_lambda_function.suggest_clips.arn
-    events              = ["s3:ObjectCreated:*"]
-    filter_suffix       = ".json"
-    filter_prefix       = "transcripts/"
-  }
-  depends_on = [aws_lambda_permission.s3_invoke_suggest_clips]
-}
-
-resource "aws_lambda_permission" "s3_invoke_suggest_clips" {
-  statement_id  = "AllowS3Invoke"
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.suggest_clips.function_name
-  principal     = "s3.amazonaws.com"
-  source_arn    = aws_s3_bucket.derived.arn
+  eventbridge = true
 }

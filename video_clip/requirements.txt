@@ -1,0 +1,3 @@
+boto3
+supabase>=1.2.0
+ffmpeg-python

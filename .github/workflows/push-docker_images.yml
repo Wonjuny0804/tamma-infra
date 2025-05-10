@@ -6,10 +6,12 @@ on:
     paths:
       - 'worker/**'
       - 'video_transcribe/**'
-      - '.github/workflows/push-audio-clean.yml'
+      - 'video_clip/**'
+      - '.github/workflows/push-docker_images.yml'
 
 env:
   AWS_REGION: us-east-1
+  AWS_ACCOUNT_ID: 711556655801
 
 jobs:
   build-and-push:
@@ -25,6 +27,8 @@ jobs:
             repo: 711556655801.dkr.ecr.us-east-1.amazonaws.com/tamma-dev-audio-clean
           - dir: video_transcribe
             repo: 711556655801.dkr.ecr.us-east-1.amazonaws.com/tamma-dev-video-transcribe
+          - dir: video_clip
+            repo: 711556655801.dkr.ecr.us-east-1.amazonaws.com/tamma-dev-video-clip
 
 
     steps:
@@ -34,7 +38,7 @@ jobs:
       - name: Configure AWS credentials for ECR
         uses: aws-actions/configure-aws-credentials@v3
         with:
-          role-to-assume: arn:aws:iam::711556655801:role/github-oidc-role
+          role-to-assume: "arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/github-oidc-role"
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to Amazon ECR
