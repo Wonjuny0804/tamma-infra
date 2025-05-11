@@ -18,6 +18,8 @@ def main():
 
     # 2. Transcribe
     result = model.transcribe(tmp.name)
+    result["video_key"] = INPUT_FILE  
+    
     transcript_key = f"transcripts/{INPUT_FILE}.json"
     s3.put_object(Bucket=DERIVED_BUCKET,
                   Key=transcript_key,
