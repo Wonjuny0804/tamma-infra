@@ -535,7 +535,8 @@ resource "aws_iam_role_policy" "lambda_trigger_ecs_policy" {
       {
         "Effect" : "Allow",
         "Action" : ["s3:GetObject"],
-        "Resource" : "${aws_s3_bucket.derived.arn}/clip_requests/*"
+        "Resource" : ["${aws_s3_bucket.derived.arn}/clip_requests/*",
+        "${aws_s3_bucket.derived.arn}/transcripts/*"]
       }
     ]
   })
@@ -654,6 +655,6 @@ resource "aws_lambda_function" "suggest_clips" {
 }
 
 resource "aws_s3_bucket_notification" "derived_eventbridge" {
-  bucket = aws_s3_bucket.derived.id
+  bucket      = aws_s3_bucket.derived.id
   eventbridge = true
 }

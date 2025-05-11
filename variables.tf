@@ -10,7 +10,7 @@ variable "supabase_url" {
 }
 
 variable "paused" {
-  type    = bool
-  default = false
+  type        = bool
+  default     = false
   description = "Set true to disable Lambdas, EB rules, and scale ECS to 0."
 }
